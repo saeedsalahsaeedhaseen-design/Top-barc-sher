@@ -1,0 +1,83 @@
+name: Build Barq Android APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, master]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Find and extract project ZIP
+        run: |
+          ZIP=$(find . -maxdepth 1 -type f -iname '*.zip' -print -quit)
+
+          if [ -z "$ZIP" ]; then
+            echo "ERROR: No project ZIP found."
+            exit 1
+          fi
+
+          mkdir -p project
+          unzip -q "$ZIP" -d project
+
+      - name: Locate Gradle project
+        id: locate
+        run: |
+          FILE=$(find project -type f \
+            \( -name settings.gradle.kts -o -name settings.gradle \) \
+            -print -quit)
+
+          if [ -z "$FILE" ]; then
+            echo "ERROR: Gradle settings file not found."
+            exit 1
+          fi
+
+          DIR=$(dirname "$FILE")
+          echo "dir=$DIR" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.3.1'
+
+      - name: Create debug keystore if missing
+        working-directory: ${{ steps.locate.outputs.dir }}
+        run: |
+          if [ ! -f debug.keystore ]; then
+            keytool -genkeypair \
+              -keystore debug.keystore \
+              -storepass android \
+              -keypass android \
+              -alias androiddebugkey \
+              -keyalg RSA \
+              -keysize 2048 \
+              -validity 10000 \
+              -dname "CN=Android Debug,O=Android,C=US"
+          fi
+
+      - name: Build debug APK
+        working-directory: ${{ steps.locate.outputs.dir }}
+        run: gradle assembleDebug
+
+      - name: Upload APK
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Barq-Android-APK
+          path: project/**/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+          
